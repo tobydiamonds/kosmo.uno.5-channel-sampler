@@ -1,7 +1,7 @@
 #include <Button.h>
 
 #define MAX_BANK 99
-#define BANK_BLINK_INTERVAL 300
+uint16_t BANK_BLINK_INTERVAL = 300;
 
 const uint8_t bank_indicator_led_pin = 8;
 const uint8_t bank_load_pin = 9;
@@ -10,6 +10,7 @@ const uint8_t bank_down_pin = 11;
 const uint8_t channel_1_mix_pins[5] = {A0, A1, A2, A3, A4};
 const uint8_t sampler_threshold_pin = A5;
 
+bool initialized = false;
 const int threshold = 5;
 int prevValue[5] = {0};
 int prevSamplerThresholdValue = 0;
@@ -26,7 +27,7 @@ bool channelArmed[5] = {false};
 uint16_t samplerThreshold = 512;
 bool samplerArmed = false;
 
-bool bankChanged = false;
+bool bankChanged = true;
 unsigned long lastBankLedTime = 0;
 bool bankLedState = false;
 unsigned long now = 0;
@@ -37,6 +38,7 @@ void sendBank() {
 
 void handleBankCommand(uint16_t payload) {
   if(payload == bank) {
+    if(!initialized) initialized = true;
     bankChanged = false;
     digitalWrite(bank_indicator_led_pin, HIGH);
   }
@@ -198,6 +200,8 @@ void handleCommand(int command, int payload) {
 
 void loop() {
   now = millis();
+
+  BANK_BLINK_INTERVAL = initialized ? 300 : 150;
   
   if(Serial.available()) {
     int command;
@@ -207,57 +211,58 @@ void loop() {
     }
   }
 
-  if(bankLoad.pressed()) {
-    sendBank();
-  }
-
-  if(bankUp.pressed()) {
-    if(bank==MAX_BANK)
-      bank=0;
-    else
-      bank++;
-    //start led blink
-    digitalWrite(bank_indicator_led_pin, LOW);
-    bankChanged = true;
-  }
-
-  if(bankDown.pressed()) {
-    if(bank==0)
-      bank=MAX_BANK;
-    else
-      bank--;
-    //start led blink
-    digitalWrite(bank_indicator_led_pin, LOW);
-    bankChanged = true;
-  }
-
-  for(int i=0; i<5; i++) {
-    int value = analogRead(channel_1_mix_pins[i]);
-    if (abs(value - prevValue[i]) >= threshold) {
-      if(value < threshold)
-        value = 0;
-      if(value > 1018)
-        value = 1023;
-
-      mixlevel[i] = value;
-      prevValue[i] = value;
-      sendChannel(i);
-
+  if(initialized) {
+    if(bankLoad.pressed()) {
+      sendBank();
     }
-  }
 
-  int samplerThresholdValue = analogRead(sampler_threshold_pin);
-  if (abs(samplerThresholdValue - prevSamplerThresholdValue) >= threshold) {
-    prevSamplerThresholdValue = samplerThresholdValue;
-    if(samplerThresholdValue < threshold)
-      samplerThresholdValue = 0;
-    if(samplerThresholdValue > 1018)
-      samplerThresholdValue = 1023;
+    if(bankUp.pressed()) {
+      if(bank==MAX_BANK)
+        bank=0;
+      else
+        bank++;
+      //start led blink
+      digitalWrite(bank_indicator_led_pin, LOW);
+      bankChanged = true;
+    }
 
-      samplerThreshold = samplerThresholdValue;
+    if(bankDown.pressed()) {
+      if(bank==0)
+        bank=MAX_BANK;
+      else
+        bank--;
+      //start led blink
+      digitalWrite(bank_indicator_led_pin, LOW);
+      bankChanged = true;
+    }
 
-    sendSampler();
-  }
+    for(int i=0; i<5; i++) {
+      int value = analogRead(channel_1_mix_pins[i]);
+      if (abs(value - prevValue[i]) >= threshold) {
+        if(value < threshold)
+          value = 0;
+        if(value > 1018)
+          value = 1023;
+
+        mixlevel[i] = value;
+        prevValue[i] = value;
+        sendChannel(i);
+      }
+    }
+
+    int samplerThresholdValue = analogRead(sampler_threshold_pin);
+    if (abs(samplerThresholdValue - prevSamplerThresholdValue) >= threshold) {
+      prevSamplerThresholdValue = samplerThresholdValue;
+      if(samplerThresholdValue < threshold)
+        samplerThresholdValue = 0;
+      if(samplerThresholdValue > 1018)
+        samplerThresholdValue = 1023;
+
+        samplerThreshold = samplerThresholdValue;
+
+      sendSampler();
+    }
+  } // initialized
 
   if(bankChanged && now >= (lastBankLedTime + BANK_BLINK_INTERVAL)) {
     lastBankLedTime = now;
