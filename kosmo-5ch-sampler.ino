@@ -1,4 +1,14 @@
 #include <Button.h>
+#include "AnalogMuxScanner.h"
+
+// 7-segment pins
+#define DISPLAY_LATCH_PIN 6
+#define DISPLAY_CLOCK_PIN 5
+#define DISPLAY_DATA_PIN  7
+#define DISPLAY_DIGIT1_ENABLE_PIN 12
+#define DISPLAY_DIGIT2_ENABLE_PIN 13
+#define DISPLAY_UPDATE_INTERVAL 50
+#define DISPLAY_SHOW_THRESHOLD_TIME 2000
 
 #define MAX_BANK 99
 uint16_t BANK_BLINK_INTERVAL = 300;
@@ -7,17 +17,25 @@ const uint8_t bank_indicator_led_pin = 8;
 const uint8_t bank_load_pin = 9;
 const uint8_t bank_up_pin = 10;
 const uint8_t bank_down_pin = 11;
-const uint8_t channel_1_mix_pins[5] = {A0, A1, A2, A3, A4};
-const uint8_t sampler_threshold_pin = A5;
+//const uint8_t channel_1_mix_pins[5] = {A0, A1, A2, A3, A4};
+//const uint8_t sampler_threshold_pin = A5;
+const uint8_t MUX_S0 = 2;
+const uint8_t MUX_S1 = 3;
+const uint8_t MUX_S2 = 4;
+const uint8_t MUX_IN = A0;
+
+const uint8_t SAMPLE_THRESHOLD_INDEX = 6;
 
 bool initialized = false;
 const int threshold = 5;
-int prevValue[5] = {0};
-int prevSamplerThresholdValue = 0;
+//int prevValue[5] = {0};
+//int prevSamplerThresholdValue = 0;
 
 Button bankLoad(bank_load_pin);
-Button bankUp(bank_up_pin);
-Button bankDown(bank_down_pin);
+Button bankUp(bank_up_pin, 100);
+Button bankDown(bank_down_pin, 100);
+
+AnalogMuxScanner analogPots(MUX_S0, MUX_S1, MUX_S2, MUX_IN, 6); // channels 0-4 : ch 0..4 mix, chanel 5: sample threashold
 
 
 uint8_t bank = 0;
@@ -31,6 +49,56 @@ bool bankChanged = true;
 unsigned long lastBankLedTime = 0;
 bool bankLedState = false;
 unsigned long now = 0;
+unsigned long lasDisplayUpdateTime = 0;
+unsigned long samplerThresholdChanged = 0;
+
+byte digits[11] = {
+    // dpCDEFGBA (assuming common cathode ans lsbfirst)
+    B01111011, // 0 => ABCDEF
+    B01000010, // 1 => BC
+    B00110111, // 2 => ABDEG
+    B01100111, // 3 => ABCDG
+    B01001110, // 4 => BCFG
+    B01101101, // 5 => ACDFG
+    B01111101, // 6 => ACDEFG
+    B01000011, // 7 => ABC
+    B01111111, // 8 => ABCDEFG
+    B01001111,  // 9 => ABCFG
+    B00000000, // reset
+};
+
+void WriteDigit(int pos, int digit, bool dot) {
+  // disable the output state
+  digitalWrite(DISPLAY_LATCH_PIN, LOW);
+
+  uint8_t data = digits[digit];
+  if(dot)
+    data |= 0x80;
+
+  if(pos==1) {
+  // digit 1
+    digitalWrite(DISPLAY_DIGIT1_ENABLE_PIN, LOW);
+    shiftOut(DISPLAY_DATA_PIN, DISPLAY_CLOCK_PIN, LSBFIRST, data);
+    digitalWrite(DISPLAY_DIGIT1_ENABLE_PIN, HIGH);
+  } else if (pos==2) {
+    digitalWrite(DISPLAY_DIGIT2_ENABLE_PIN, LOW);
+    shiftOut(DISPLAY_DATA_PIN, DISPLAY_CLOCK_PIN, LSBFIRST, data);  
+    digitalWrite(DISPLAY_DIGIT2_ENABLE_PIN, HIGH);    
+  }
+  digitalWrite(DISPLAY_LATCH_PIN, HIGH);
+}
+
+void WriteToDisplay(int number, bool dot) {
+  uint8_t digit1 = number / 10;
+  uint8_t digit2 = number % 10;
+  WriteDigit(1, digit1, dot);
+  WriteDigit(2, digit2, false);
+}
+
+void ResetDisplay() {
+  WriteDigit(1, 10, false);
+  WriteDigit(2, 10, false);
+}
 
 void sendBank() {
   Serial.print(0x00); Serial.print(' '); Serial.println(bank);
@@ -41,6 +109,11 @@ void handleBankCommand(uint16_t payload) {
     if(!initialized) initialized = true;
     bankChanged = false;
     digitalWrite(bank_indicator_led_pin, HIGH);
+  } else {
+    // the bank has changed from i2c (via the pi)
+    bank = payload;
+    bankChanged = false;
+    digitalWrite(bank_indicator_led_pin, HIGH);    
   }
 }
 
@@ -62,7 +135,7 @@ void handleChannelCommand(int channel, uint16_t payload) {
   *  10-14: not used
   *  0-9: mix level 
   */
-  channelArmed[channel] = payload & 0x8000;
+  channelArmed[channel] = payload & 0x8000 == 0x8000;
   mixlevel[channel] = payload & 0x03FF;
 }
 
@@ -76,6 +149,7 @@ void sendSampler() {
   uint16_t value = samplerArmed ? 0x8000 : 0x0;
   value |= samplerThreshold;
   Serial.print(address); Serial.print(' '); Serial.println(value);  
+
 }
 
 void handleSamplerCommand(uint16_t payload) {
@@ -88,8 +162,35 @@ void handleSamplerCommand(uint16_t payload) {
   samplerThreshold = payload & 0x03FF;
 }
 
+const int potmap[8] = {0,4,2,6,1,-1,3,-1}; 
+
+void onAnalogPotChangedHandler(int inputNumber, uint16_t value) {
+
+  uint16_t invertedValue = (uint16_t)(1023-value);
+
+  if(inputNumber < 0 || inputNumber > 7) return;
+  int index = potmap[inputNumber];
+
+  if (index >= 0 && index <= 4) {
+    mixlevel[index] = invertedValue;
+    sendChannel(index);
+  } 
+  else if(inputNumber == SAMPLE_THRESHOLD_INDEX) {
+    samplerThreshold = invertedValue;
+    samplerThresholdChanged = now;
+    sendSampler();    
+  }
+}
+
 void setup() {
   Serial.begin(115200);
+
+  pinMode(DISPLAY_LATCH_PIN, OUTPUT);
+  pinMode(DISPLAY_CLOCK_PIN, OUTPUT);
+  pinMode(DISPLAY_DATA_PIN, OUTPUT);
+  pinMode(DISPLAY_DIGIT1_ENABLE_PIN, OUTPUT);
+  pinMode(DISPLAY_DIGIT2_ENABLE_PIN, OUTPUT);  
+  ResetDisplay();
 
   bankLoad.begin();
   bankUp.begin();
@@ -97,6 +198,13 @@ void setup() {
 
   pinMode(bank_indicator_led_pin, OUTPUT);
   digitalWrite(bank_indicator_led_pin, LOW);
+
+  // // 74HC4051/analog mux
+  analogPots.onChange(onAnalogPotChangedHandler);
+  analogPots.setHysteresis(5);
+  analogPots.setSamplesPerRead(1);
+  analogPots.setScanInterval(10);
+  analogPots.begin();
 
   // send defaults to rpi
   sendBank();
@@ -236,31 +344,16 @@ void loop() {
       bankChanged = true;
     }
 
-    for(int i=0; i<5; i++) {
-      int value = analogRead(channel_1_mix_pins[i]);
-      if (abs(value - prevValue[i]) >= threshold) {
-        if(value < threshold)
-          value = 0;
-        if(value > 1018)
-          value = 1023;
+    analogPots.scan(now);
 
-        mixlevel[i] = value;
-        prevValue[i] = value;
-        sendChannel(i);
+    if(now >= (lasDisplayUpdateTime + DISPLAY_UPDATE_INTERVAL)) {
+      bool displaySamplerThreshold = samplerThresholdChanged > 0 && (now < (samplerThresholdChanged + DISPLAY_SHOW_THRESHOLD_TIME));
+      if(displaySamplerThreshold) {
+        uint8_t value = map(samplerThreshold, 0, 1023, 1, 10);
+        WriteToDisplay(value, true);
+      } else {
+        WriteToDisplay(bank, false);
       }
-    }
-
-    int samplerThresholdValue = analogRead(sampler_threshold_pin);
-    if (abs(samplerThresholdValue - prevSamplerThresholdValue) >= threshold) {
-      prevSamplerThresholdValue = samplerThresholdValue;
-      if(samplerThresholdValue < threshold)
-        samplerThresholdValue = 0;
-      if(samplerThresholdValue > 1018)
-        samplerThresholdValue = 1023;
-
-        samplerThreshold = samplerThresholdValue;
-
-      sendSampler();
     }
   } // initialized
 
@@ -269,5 +362,7 @@ void loop() {
     bankLedState = !bankLedState;
     digitalWrite(bank_indicator_led_pin, bankLedState ? HIGH : LOW);
   }
+
+
 
 }
