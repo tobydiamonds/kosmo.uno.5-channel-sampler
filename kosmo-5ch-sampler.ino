@@ -1,5 +1,6 @@
 #include <Button.h>
 #include "AnalogMuxScanner.h"
+#include "kosmo-comm-slave.h"
 
 // 7-segment pins
 #define DISPLAY_LATCH_PIN 6
@@ -108,12 +109,8 @@ void handleBankCommand(uint16_t payload) {
   if(payload == bank) {
     if(!initialized) initialized = true;
     bankChanged = false;
+    registers.bank = bank;
     digitalWrite(bank_indicator_led_pin, HIGH);
-  } else {
-    // the bank has changed from i2c (via the pi)
-    bank = payload;
-    bankChanged = false;
-    digitalWrite(bank_indicator_led_pin, HIGH);    
   }
 }
 
@@ -137,6 +134,7 @@ void handleChannelCommand(int channel, uint16_t payload) {
   */
   channelArmed[channel] = payload & 0x8000 == 0x8000;
   mixlevel[channel] = payload & 0x03FF;
+  registers.mix[channel] = mixlevel[channel];
 }
 
 void sendSampler() {
@@ -169,13 +167,13 @@ void onAnalogPotChangedHandler(int inputNumber, uint16_t value) {
   uint16_t invertedValue = (uint16_t)(1023-value);
 
   if(inputNumber < 0 || inputNumber > 7) return;
-  int index = potmap[inputNumber];
+  int channel = potmap[inputNumber];
 
-  if (index >= 0 && index <= 4) {
-    mixlevel[index] = invertedValue;
-    sendChannel(index);
-  } 
-  else if(inputNumber == SAMPLE_THRESHOLD_INDEX) {
+  if (channel >= 0 && channel <= 4) {
+    mixlevel[channel] = invertedValue;
+    registers.mix[channel] = mixlevel[channel];
+    sendChannel(channel);
+  } else if(inputNumber == SAMPLE_THRESHOLD_INDEX) {
     samplerThreshold = invertedValue;
     samplerThresholdChanged = now;
     sendSampler();    
@@ -205,6 +203,9 @@ void setup() {
   analogPots.setSamplesPerRead(1);
   analogPots.setScanInterval(10);
   analogPots.begin();
+
+  // ic2
+  setupSlave();
 
   // send defaults to rpi
   sendBank();
@@ -355,6 +356,17 @@ void loop() {
         WriteToDisplay(bank, false);
       }
     }
+
+    if(newPartData) {
+      newPartData = false;
+      bank = nextRegisters.bank;
+      sendBank();
+      for(int i=0; i<5; i++) {
+        mixlevel[i] = nextRegisters.mix[i];
+        sendChannel(i);
+      }
+    }
+
   } // initialized
 
   if(bankChanged && now >= (lastBankLedTime + BANK_BLINK_INTERVAL)) {
