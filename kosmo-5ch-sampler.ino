@@ -360,9 +360,11 @@ void loop() {
     if(newPartData) {
       newPartData = false;
       bank = nextRegisters.bank;
+      registers.bank = bank;
       sendBank();
       for(int i=0; i<5; i++) {
         mixlevel[i] = nextRegisters.mix[i];
+        registers.mix[i] = mixlevel[i];
         sendChannel(i);
       }
     }
