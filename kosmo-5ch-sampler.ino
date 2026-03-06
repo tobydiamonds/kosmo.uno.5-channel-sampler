@@ -1,6 +1,9 @@
 #include <Button.h>
 #include "AnalogMuxScanner.h"
-#include "kosmo-comm-slave.h"
+//#include "kosmo-comm-slave.h"
+#include "KosmoSlaveI2CService.h"
+#include "Models.h"
+#include "Common.h"
 
 // 7-segment pins
 #define DISPLAY_LATCH_PIN 6
@@ -38,6 +41,9 @@ Button bankDown(bank_down_pin, 100);
 
 AnalogMuxScanner analogPots(MUX_S0, MUX_S1, MUX_S2, MUX_IN, 6); // channels 0-4 : ch 0..4 mix, chanel 5: sample threashold
 
+KosmoSlaveI2CService<SamplerPart> slave(SLAVE_ADDR);
+bool newPartData = false;
+int currentPartIndex = -1;
 
 uint8_t bank = 0;
 uint16_t mixlevel[5] = {512};
@@ -109,7 +115,7 @@ void handleBankCommand(uint16_t payload) {
   if(payload == bank) {
     if(!initialized) initialized = true;
     bankChanged = false;
-    registers.bank = bank;
+    slave.current.bank = bank;
     digitalWrite(bank_indicator_led_pin, HIGH);
   }
 }
@@ -134,7 +140,7 @@ void handleChannelCommand(int channel, uint16_t payload) {
   */
   channelArmed[channel] = payload & 0x8000 == 0x8000;
   mixlevel[channel] = payload & 0x03FF;
-  registers.mix[channel] = mixlevel[channel];
+  slave.current.mix[channel] = mixlevel[channel];
 }
 
 void sendSampler() {
@@ -171,7 +177,7 @@ void onAnalogPotChangedHandler(int inputNumber, uint16_t value) {
 
   if (channel >= 0 && channel <= 4) {
     mixlevel[channel] = invertedValue;
-    registers.mix[channel] = mixlevel[channel];
+    slave.current.mix[channel] = mixlevel[channel];
     sendChannel(channel);
   } else if(inputNumber == SAMPLE_THRESHOLD_INDEX) {
     samplerThreshold = invertedValue;
@@ -205,11 +211,41 @@ void setup() {
   analogPots.begin();
 
   // ic2
-  setupSlave();
+  //setupSlave();
+  // i2c slave
+  slave.onSongPartsReceived(onSongPartsReceived);
+  slave.onPartIndexChanged(onPartIndexChanged);
+  slave.onStart(onStart);
+  slave.onStop(onStop);
+  slave.onAutomation(onAutomation);    
 
   // send defaults to rpi
   sendBank();
 
+}
+
+void onSongPartsReceived() {
+  currentPartIndex = 0;
+  newPartData = true;
+}
+
+void onPartIndexChanged(const int partIndex) {
+  currentPartIndex = partIndex;
+  newPartData = true;  
+}
+
+void onStart() {
+  Serial.println("START!!!");
+}
+
+void onStop() {
+  Serial.println("STOP!!!");
+}
+
+void onAutomation(Automation automation) {
+  char s[100];
+  sprintf(s, "automation => target: %d value: %d", automation.target, automation.value);
+  Serial.println(s);
 }
 
 void printIntArray(const int* arr, int size) {
@@ -357,14 +393,17 @@ void loop() {
       }
     }
 
-    if(newPartData) {
+    if(newPartData && currentPartIndex >= 0) {
       newPartData = false;
-      bank = nextRegisters.bank;
-      registers.bank = bank;
+
+      SamplerPart part = slave.getPart(currentPartIndex);
+
+      bank = part.bank;
+      slave.current.bank = bank;
       sendBank();
       for(int i=0; i<5; i++) {
-        mixlevel[i] = nextRegisters.mix[i];
-        registers.mix[i] = mixlevel[i];
+        mixlevel[i] = part.mix[i];
+        slave.current.mix[i] = mixlevel[i];
         sendChannel(i);
       }
     }
