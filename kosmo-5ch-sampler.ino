@@ -213,9 +213,9 @@ void setup() {
   // ic2
   //setupSlave();
   // i2c slave
+  slave.begin();
   slave.onSongPartsReceived(onSongPartsReceived);
   slave.onPartIndexChanged(onPartIndexChanged);
-  slave.onStart(onStart);
   slave.onStop(onStop);
   slave.onAutomation(onAutomation);    
 
@@ -234,18 +234,17 @@ void onPartIndexChanged(const int partIndex) {
   newPartData = true;  
 }
 
-void onStart() {
-  Serial.println("START!!!");
-}
-
 void onStop() {
-  Serial.println("STOP!!!");
+  Serial.print(0x20); Serial.print(' '); Serial.println(0);
 }
 
 void onAutomation(Automation automation) {
-  char s[100];
-  sprintf(s, "automation => target: %d value: %d", automation.target, automation.value);
-  Serial.println(s);
+  if(automation.target >= 0x01 && automation.target <= 0x05) {
+    int channel = automation.target - 1;
+    mixlevel[channel] = automation.value & 0x03FF;
+    slave.current.mix[channel] = mixlevel[channel];
+    sendChannel(channel);
+  }
 }
 
 void printIntArray(const int* arr, int size) {

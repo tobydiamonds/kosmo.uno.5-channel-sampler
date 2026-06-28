@@ -132,10 +132,10 @@ private:
 
     lastReceive = millis();
 
-    // char s[100];
-    // sprintf(s, "receiving part %d  chunk %d/%d - size: %d - offset: %d", partIndex, currentChunk, totalChunks, size-1, offset);
-    // Serial.println(s);
-    //printBuffer(buffer, size);
+    char s[100];
+    sprintf(s, "receiving part %d  chunk %d/%d - size: %d - offset: %d", partIndex, currentChunk, totalChunks, size-1, offset);
+    Serial.println(s);
+    printBuffer(buffer, size);
 
     for(int i=1; i<size; i++) { // buffer[0] has the chunksize
       rxBuffer[offset + i-1] = buffer[i];
@@ -152,13 +152,15 @@ public:
   KosmoSlaveI2CService(uint8_t address)
     : address(address) {
     instance = this;
-    Wire.begin(address);
-    //Wire.setClock(400000);
-    Wire.onReceive(staticOnReceive);
-    Wire.onRequest(staticOnRequest);
     totalChunks = sizeof(PartType) / I2C_CHUNK_MAX;
     if(totalChunks==0)
       totalChunks = 1;
+  }
+
+  void begin() {
+    Wire.begin(address);
+    Wire.onReceive(staticOnReceive);
+    Wire.onRequest(staticOnRequest);
   }
 
   PartType current;

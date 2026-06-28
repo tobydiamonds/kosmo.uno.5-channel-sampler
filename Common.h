@@ -4,7 +4,7 @@
 #define I2C_MAX 32
 //#define I2C_CHUNK_MAX 25
 #define DRUM_CHANNELS 5
-#define PARTS 8
+#define PARTS 16
 #define SLAVE_ADDR 10
 
 const int I2C_CHUNK_MAX = 30;
