@@ -141,7 +141,7 @@ private:
       rxBuffer[offset + i-1] = buffer[i];
     }
 
-    if(currentChunk == totalChunks) {
+    if(currentChunk == totalChunks - 1) {
       memcpy((uint8_t*)&parts[partIndex], rxBuffer, totalPartSize);
       if(partIndex == (PARTS-1) && songPartsReceivedCallback)
         songPartsReceivedCallback();
@@ -152,9 +152,7 @@ public:
   KosmoSlaveI2CService(uint8_t address)
     : address(address) {
     instance = this;
-    totalChunks = sizeof(PartType) / I2C_CHUNK_MAX;
-    if(totalChunks==0)
-      totalChunks = 1;
+    totalChunks = (sizeof(PartType) + I2C_CHUNK_MAX - 1) / I2C_CHUNK_MAX;
   }
 
   void begin() {
