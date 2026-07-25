@@ -397,9 +397,11 @@ void loop() {
 
       SamplerPart part = slave.getPart(currentPartIndex);
 
-      bank = part.bank;
-      slave.current.bank = bank;
-      sendBank();
+      if(part.bank != bank) {
+        bank = part.bank;
+        slave.current.bank = bank;
+        sendBank();
+      }
       for(int i=0; i<5; i++) {
         mixlevel[i] = part.mix[i];
         slave.current.mix[i] = mixlevel[i];
