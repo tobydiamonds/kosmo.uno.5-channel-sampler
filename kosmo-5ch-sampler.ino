@@ -396,15 +396,14 @@ void loop() {
       newPartData = false;
 
       SamplerPart part = slave.getPart(currentPartIndex);
+      slave.current = part;
 
       if(part.bank != bank) {
         bank = part.bank;
-        slave.current.bank = bank;
         sendBank();
       }
       for(int i=0; i<5; i++) {
         mixlevel[i] = part.mix[i];
-        slave.current.mix[i] = mixlevel[i];
         sendChannel(i);
       }
     }
